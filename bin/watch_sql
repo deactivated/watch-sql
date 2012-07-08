@@ -1,0 +1,62 @@
+#!/usr/bin/env python
+
+import argparse
+import dpkt, pcap
+import sqlparse
+from pygments import highlight
+from pygments.lexers import MySqlLexer
+from pygments.formatters import TerminalFormatter
+
+
+class MySQLCommand(dpkt.Packet):
+    __byte_order__ = '<'
+    __hdr__ = (('length', 'I', 0),
+               ('opcode', 'B', 0))
+
+
+def print_sql(sql):
+    "Print colorized, formatted SQL to terminal."
+    sql = sqlparse.format(sql, reindent=True, keyword_case='upper')
+    print highlight(sql, MySqlLexer(), TerminalFormatter()).strip()
+
+
+def handle_command(buf):
+    pkt = MySQLCommand(buf)
+
+    print_sql(pkt.data.replace("\n", ""))
+    print
+
+
+def handle_packet(ts, pkt_buf):
+    try:
+        pkt = dpkt.ip.IP(pkt_buf[4:])
+        tcp = pkt.data
+        if tcp.dport == 3306 and tcp.data:
+            print ts, tcp.sport, tcp.dport
+            handle_command(tcp.data)
+    except Exception as e:
+        print e
+        return
+
+
+def loop(args):
+    pc = pcap.pcap(name=args.interface)
+    pc.setfilter('tcp and port %d' % args.port)
+
+    print 'listening on %s: %s' % (pc.name, pc.filter)
+    pc.loop(handle_packet)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Watch MySQL packet traffic.')
+    parser.add_argument('-i', '--interface', default=None,
+                        help='Interface to listen on.')
+    parser.add_argument('-p', '--port', default=3306,
+                        help='Server port to intercept.')
+
+    args = parser.parse_args()
+    loop(args)
+
+
+if __name__ == '__main__':
+    main()
